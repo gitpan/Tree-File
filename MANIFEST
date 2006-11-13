@@ -13,7 +13,6 @@ lib/Tree/File.pm
 lib/Tree/File/YAML.pm
 Makefile.PL
 MANIFEST
-META.yml			# Will be created by "make dist"
 README
 
 t/00.load.t
@@ -35,3 +34,6 @@ t/set.t
 t/simple.t
 t/symlink.t
 t/write.t
+t/perl-critic.t
+LICENSE
+META.yml                                 Module meta-data (added by MakeMaker)

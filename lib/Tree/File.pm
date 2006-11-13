@@ -12,13 +12,13 @@ Tree::File - store a data structure in a file tree
 
 =head1 VERSION
 
-version 0.09
+version 0.110
 
- $Id: File.pm,v 1.2 2005/07/28 12:56:51 rjbs Exp $
+ $Id: /my/cs/projects/treefile/trunk/lib/Tree/File.pm 27887 2006-11-13T14:59:35.581083Z rjbs  $
 
 =cut
 
-our $VERSION = '0.09';
+our $VERSION = '0.110';
 
 =head1 SYNOPSIS
 
@@ -53,6 +53,9 @@ C<%arg> hash is optional, the following options are recognized:
   readonly  - if true, set and delete methods croak (default: false)
   preload   - the number of levels of directories to preload (default: none)
               pass -1 to preload as deep as required
+  found     - a closure called when a node or value is found; it is passed the
+              Tree::File object, the id requested, and the data retrieved; it
+              should apply any transformations and return the 'real' value desired.
   not_found - a closure called if a node cannot be found; it is passed the id
               requested and the root of the last node reached; by default,
               Tree::File will return undef in this situation
@@ -64,19 +67,30 @@ sub new {
 
   $arg->{lock_mgr} = bless { root => $root } => "Tree::File::LockManager";
   
-  my $self = $class->_load("", $arg->{preload}, {%$arg, basedir => $root});
+  my $self = $class->_load(q{}, $arg->{preload}, {%$arg, basedir => $root});
 
   return $self;
 }
 
+sub _as_arg {
+  my $self = shift;
+  return {
+    map { $_ => $self->{$_} } qw(basedir lock_mgr readonly found not_found)
+  };
+}
+
 sub _new_node {
-  my ($class, $root, $data, $arg) = @_;
-  $class = ref $class if ref $class;
+  my ($self, $root, $data, $arg) = @_;
+  my $class = ref $self ? ref $self : $self;
+
+  if (ref $self and not $arg) {
+    $arg = $self->_as_arg;
+  }
   
   return $data if ref $data ne 'HASH';
 
   my $processed_data = {
-    map { $_ => $class->_new_node("$root/$_", $data->{$_}, { readonly => $arg->{readonly} }) }
+    map { $_ => $self->_new_node("$root/$_", $data->{$_}, $arg) }
     keys %$data
   };
 
@@ -101,7 +115,15 @@ sub _load {
   my ($self, $root, $preload, $arg) = @_;
   my $lock_mgr = $arg->{lock_mgr};
 
-  $lock_mgr->lock();
+  eval { $lock_mgr->lock() };
+  if ($@) {
+    if ($@ =~ /couldn.t open lockfile/i) {
+      $arg->{readonly}++;
+      $lock_mgr->no_op;
+    } else {
+      die; ## no critic Carping
+    }
+  }
 
   my $file = $root ? "$arg->{basedir}/$root" : $arg->{basedir};
 
@@ -153,6 +175,11 @@ sub _not_found {
   return;
 }
 
+sub _found {
+  my ($self) = shift;
+  return $self->{found} ? $self->{found}->($self, @_) : $_[1];
+}
+
 sub get {
   my ($self, $id, $autovivify) = @_;
 
@@ -172,12 +199,12 @@ sub get {
     if (ref $self->{data}{$id} eq 'CODE') {
       $self->{data}{$id} = $self->{data}{$id}->();
     }
-    return $self->{data}{$id};
+    return $self->_found($id, $self->{data}{$id});
   }
 
   if ($autovivify) {
     return $self->{data}{$id} =
-      $self->_new_node("$self->{root}/$id", {}, { readonly => $self->{readonly} });
+      $self->_new_node("$self->{root}/$id", {});
   }
 
   return $self->_not_found($id, $self->{root});
@@ -190,10 +217,10 @@ are automatically expanded into trees.
 
 =cut
 
-sub set {
+sub set { ## no critic Ambiguous
   my ($self, $id, $value, $root) = @_;
 
-  $value = $value->data if UNIVERSAL::isa($value, "Tree::File");
+  $value = $value->data if eval { $value->isa("Tree::File") };
 
   croak "set called on readonly tree" if $self->{readonly};
   
@@ -207,7 +234,7 @@ sub set {
   if ($rest) { return $self->get($id, 1)->set($rest, $value, $root); }
   
   return $self->{data}{$id} =
-    $self->_new_node($root, $value, { readonly => $self->{readonly} });
+    $self->_new_node($root, $value);
 }
 
 =head2 C<< $tree->delete($id) >>
@@ -216,7 +243,7 @@ This method deletes the identified branch (and returns the deleted value).
 
 =cut
 
-sub delete {
+sub delete { ## no critic Homonym
   my ($self, $id) = @_;
 
   croak "delete called on readonly tree" if $self->{readonly};
@@ -268,6 +295,18 @@ sub basename {
   return $parts[-1];
 }
 
+sub _handoff {
+  my $self = shift;
+  my $method = (caller(1))[3];
+  $method =~ s/.*:://;
+  my $node = $self->get(@_);
+  unless ($node) {
+    return $self->_not_found(@_);
+  }
+  #warn "handing off $method to " . $node->path . "\n";
+  $node->$method;
+}
+
 =head2 C<< $tree->node_names() >>
 
 This method returns the names of all the nodes beneath this branch.
@@ -275,7 +314,8 @@ This method returns the names of all the nodes beneath this branch.
 =cut
 
 sub node_names {
-  my ($self) = @_;
+  my $self = shift;
+  return $self->_handoff(@_) if @_;
   return sort keys %{$self->{data}};
 }
 
@@ -286,7 +326,8 @@ This method returns each node beneath this branch.
 =cut
 
 sub nodes {
-  my ($self) = @_;
+  my $self = shift;
+  return $self->_handoff(@_) if @_;
   return map { $self->get($_) } $self->node_names();
 }
 
@@ -295,8 +336,9 @@ sub nodes {
 =cut
 
 sub branch_names {
-  my ($self) = @_;
-  return grep { UNIVERSAL::isa($self->get($_), "Tree::File") } $self->node_names();
+  my $self = shift;
+  return $self->_handoff(@_) if @_;
+  return grep { eval { $self->get($_)->isa("Tree::File") } } $self->node_names;
 }
 
 =head2 C<< $tree->branches >>
@@ -307,7 +349,8 @@ is, are also Tree::File objects).
 =cut
 
 sub branches {
-  my ($self) = @_;
+  my $self = shift;
+  return $self->_handoff(@_) if @_;
   return map { $self->get($_) } $self->branch_names();
 }
 
@@ -325,8 +368,8 @@ sub data {
   for ($self->node_names) {
     my $datum = $self->get($_);
     
-    $data{$_} = UNIVERSAL::isa($datum, "Tree::File") ? $datum->data
-                                                     : $datum;
+    $data{$_} = eval { $datum->isa("Tree::File") } ? $datum->data
+                                                   : $datum;
   }
 
   return \%data;
@@ -340,7 +383,7 @@ was orginally loaded as a directory.
 
 =cut
 
-sub write {
+sub write { ## no critic Homonym
   my $self    = shift;
   my $basedir = shift || $self->{basedir};
   my $root    = $basedir ? "$basedir/$self->{root}" : $self->{root};
@@ -359,7 +402,7 @@ sub write {
     File::Path::mkpath($root);
     for ($self->node_names) {
       my $datum = $self->get($_);
-      if (UNIVERSAL::isa($datum, "Tree::File")) { $datum->write($basedir) }
+      if (eval { $datum->isa("Tree::File") }) { $datum->write($basedir) }
       else { $self->write_file("$root/$_", $datum) }
     }
   } else {
@@ -395,7 +438,7 @@ sub type {
   return $self->{type} unless @_;
 
   my $type = shift;
-  return undef $self->{type} unless defined $type;
+  return $self->{type} = undef unless defined $type;
 
   croak "invalid branch type: $type" unless $type =~ /\A(?:dir|file)\Z/;
 
@@ -415,21 +458,25 @@ sub collapse { (shift)->type("file") }
 
 package Tree::File::LockManager;
 
+use Carp ();
 use Fcntl qw(:DEFAULT :flock);
-use File::Basename;
+use File::Basename ();
 
 sub lock {
   my ($self, $tree) = @_;
+  return if $self->{_no_op};
   
   unless ($self->{_lockfile}) {
     my $lockfile = File::Basename::dirname($self->{root}) . "/.lock";
     unless (-e $lockfile) {
-      open my $lock, '>', $lockfile;
+      open(my $lock, '>', $lockfile)
+        or Carp::croak("couldn't create lockfile $lockfile");
       print $lock time, "\n";
       close $lock;
     }
     $self->{_locks} = 0;
-    open $self->{_lockfile}, "+<", $lockfile;
+    open($self->{_lockfile}, "+<", $lockfile)
+      or Carp::croak("couldn't open lockfile $lockfile");
   }
   flock($self->{_lockfile}, LOCK_EX);
   ++$self->{_locks};
@@ -437,9 +484,15 @@ sub lock {
 
 sub unlock {
   my ($self, $tree) = @_;
+  return if $self->{_no_op};
   return unless $self->{_lockfile};
   flock($self->{_lockfile}, LOCK_UN) if (--$self->{_locks} == 0);
   return $self->{_locks};
+}
+
+sub no_op {
+  my $self = shift;
+  $self->{_no_op}++;
 }
 
 =head1 TODO

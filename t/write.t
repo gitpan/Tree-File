@@ -41,7 +41,10 @@ ok(-f "$tmpdir/stooges", "simple/stooges created as a normal file");
 ok(-d "$tmpdir/armies",  "simple/armies created as a dir");
 
 # modify and write out one branch of the tree
-$copied->set("/armies/german/soldiers", [qw(hans dieter)], "replace a value");
+ok(
+  $copied->set("/armies/german/soldiers", [qw(hans dieter)]),
+  "replace a value"
+);
 $copied->get("/armies")->write();
 ok(1, "survived writing of a branch");
 

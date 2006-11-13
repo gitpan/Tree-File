@@ -1,3 +1,4 @@
+#!perl
 use strict;
 use warnings;
 
@@ -73,6 +74,12 @@ my @branches = $tree->branches();
 is(@branches, 2, "there are two branches");
 isa_ok(shift(@branches), "Tree::File::YAML", "first branch is a tree");
 isa_ok(shift(@branches), "Tree::File::YAML", "second branch is a tree");
+
+my @deep_nodes = $tree->node_names("/armies/german");
+is(@deep_nodes, 2, "there are two deep nodes");
+is_deeply([ sort @deep_nodes ],
+	  [ qw(prisoners soldiers) ],
+	  "deep node names are correct");
 
 is_deeply(
   $tree->data,

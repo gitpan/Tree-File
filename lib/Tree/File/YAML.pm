@@ -16,13 +16,13 @@ Tree::File::YAML - store a data structure in a file tree (using YAML)
 
 =head1 VERSION
 
-version 0.09
+version 0.110
 
- $Id: YAML.pm,v 1.2 2005/07/28 12:56:51 rjbs Exp $
+ $Id: /my/cs/projects/treefile/trunk/lib/Tree/File/YAML.pm 27887 2006-11-13T14:59:35.581083Z rjbs  $
 
 =cut
 
-our $VERSION = '0.09';
+our $VERSION = '0.110';
 
 =head1 SYNOPSIS
 
@@ -87,13 +87,24 @@ This method writes the given data, as YAML, to the given filename.
 sub write_file {
   my ($self, $filename, $data) = @_;
 
+  $filename =~ s{//}{/}g;
   $filename =~ s{/\Z}{};
+  
+  if (-d $filename) {
+    File::Path::rmtree($filename);
+    return YAML::DumpFile($filename, $data);
+  }
+  
+  if (-f $filename) {
+    return YAML::DumpFile($filename, $data);
+  }
 
   my $dir = File::Basename::dirname($filename);
-  File::Path::rmtree($filename) if -d $filename;
-  File::Path::mkpath($dir) unless -d $dir;
-
-  YAML::DumpFile($filename, $data);
+  unless (-d $dir) {
+    # die "this is the problem" if -f $dir;
+    File::Path::mkpath($dir) unless -d $dir;
+  }
+  return YAML::DumpFile($filename, $data);
 }
 
 =head1 TODO
