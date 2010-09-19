@@ -12,13 +12,13 @@ Tree::File - store a data structure in a file tree
 
 =head1 VERSION
 
-version 0.110
+version 0.111
 
- $Id: /my/cs/projects/treefile/trunk/lib/Tree/File.pm 27887 2006-11-13T14:59:35.581083Z rjbs  $
+ $Id$
 
 =cut
 
-our $VERSION = '0.110';
+our $VERSION = '0.111';
 
 =head1 SYNOPSIS
 
