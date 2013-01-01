@@ -36,4 +36,5 @@ t/symlink.t
 t/write.t
 t/perl-critic.t
 LICENSE
-META.yml                                 Module meta-data (added by MakeMaker)
+META.yml                                 Module YAML meta-data (added by MakeMaker)
+META.json                                Module JSON meta-data (added by MakeMaker)
